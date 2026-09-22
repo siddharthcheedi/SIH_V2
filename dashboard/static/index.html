@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMR Fleet Dashboard — SIH26123</title>
+    <meta name="description" content="Real-time observer-only dashboard for decentralized AMR fleet coordination">
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">
+                    <div class="logo-icon">⬡</div>
+                    <div class="logo-text">
+                        <h1>AMR Fleet Command</h1>
+                        <span class="subtitle">SIH26123 · Decentralized P2P Coordination</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="status-indicator" id="connection-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Connecting…</span>
+                </div>
+                <div class="badge observer-badge">OBSERVER ONLY</div>
+            </div>
+        </header>
+
+        <!-- Main content -->
+        <main class="main-content">
+            <!-- Left: Warehouse map canvas -->
+            <section class="map-section">
+                <div class="panel-header">
+                    <h2>Warehouse Map</h2>
+                    <span class="panel-badge" id="robot-count">0 robots</span>
+                </div>
+                <div class="canvas-container">
+                    <canvas id="warehouse-canvas" width="800" height="560"></canvas>
+                    <div class="canvas-overlay">
+                        <div class="scale-indicator">1 cell = 0.5m</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right: Status panels -->
+            <aside class="status-section">
+                <!-- System metrics -->
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value" id="metric-uptime">0:00</div>
+                        <div class="metric-label">Uptime</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" id="metric-tasks">0/0</div>
+                        <div class="metric-label">Tasks Done</div>
+                    </div>
+                    <div class="metric-card alert-card">
+                        <div class="metric-value" id="metric-collisions">0</div>
+                        <div class="metric-label">Collisions</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value" id="metric-deadlocks">0</div>
+                        <div class="metric-label">Deadlocks Resolved</div>
+                    </div>
+                </div>
+
+                <!-- Robot list -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2>Fleet Status</h2>
+                    </div>
+                    <div class="robot-list" id="robot-list">
+                        <div class="empty-state">Waiting for telemetry…</div>
+                    </div>
+                </div>
+
+                <!-- Explainability log -->
+                <div class="panel log-panel">
+                    <div class="panel-header">
+                        <h2>Decision Log</h2>
+                        <button class="btn-clear" id="clear-log">Clear</button>
+                    </div>
+                    <div class="log-container" id="decision-log">
+                        <div class="empty-state">No decisions logged yet</div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>Bharat Electronics Limited · Smart India Hackathon 2026</span>
+            <span class="footer-divider">|</span>
+            <span>Observer-only — this dashboard cannot issue commands</span>
+        </footer>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

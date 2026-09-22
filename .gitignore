@@ -1,0 +1,31 @@
+# ROS2 / colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# Gazebo
+*.gz_log
+/.gazebo/
+
+# Benchmark output (raw run data stays local, summaries get committed deliberately)
+benchmarks/raw/
+*.bag
+*.db3
+
+# RL model checkpoints (regenerated, not committed)
+*.pkl
+*.pt
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

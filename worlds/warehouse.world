@@ -1,0 +1,144 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="warehouse">
+
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <!--
+      Layout (top-down, meters, origin at center):
+        x: -10 .. 10   (east-west, 20m)
+        y: -7  .. 7    (north-south, 14m)
+
+        4 shelf rows at x = -6, -2, 2, 6, each 1m wide × 8m long,
+        spanning y = -5 .. 3. That leaves:
+          - a 2m-deep south cross-aisle (y: -7 .. -5)
+          - a 4m-deep north cross-aisle (y: 3 .. 7)
+        so all 3 inter-shelf aisles connect into a loop at both ends —
+        this creates the 6 intersections / choke points the conflict +
+        deadlock layer is tested against.
+    -->
+
+    <model name="warehouse_structure">
+      <static>true</static>
+
+      <link name="wall_north">
+        <pose>0 7 1.25 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>20.4 0.2 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>20.4 0.2 2.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient></material>
+        </visual>
+      </link>
+
+      <link name="wall_south">
+        <pose>0 -7 1.25 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>20.4 0.2 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>20.4 0.2 2.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient></material>
+        </visual>
+      </link>
+
+      <link name="wall_east">
+        <pose>10 0 1.25 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>0.2 14.4 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.2 14.4 2.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient></material>
+        </visual>
+      </link>
+
+      <link name="wall_west">
+        <pose>-10 0 1.25 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>0.2 14.4 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.2 14.4 2.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient></material>
+        </visual>
+      </link>
+
+      <link name="shelf_1">
+        <pose>-6 -1 1.0 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+          <material><ambient>0.8 0.5 0.1 1</ambient></material>
+        </visual>
+      </link>
+
+      <link name="shelf_2">
+        <pose>-2 -1 1.0 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+          <material><ambient>0.8 0.5 0.1 1</ambient></material>
+        </visual>
+      </link>
+
+      <link name="shelf_3">
+        <pose>2 -1 1.0 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+          <material><ambient>0.8 0.5 0.1 1</ambient></material>
+        </visual>
+      </link>
+
+      <link name="shelf_4">
+        <pose>6 -1 1.0 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.0 8.0 2.0</size></box></geometry>
+          <material><ambient>0.8 0.5 0.1 1</ambient></material>
+        </visual>
+      </link>
+
+    </model>
+
+    <!-- Ground-truth model state publisher for collision monitoring (§4.4).
+         Publishes /gazebo/model_states at 10 Hz — world-frame positions
+         for every model, which the collision_monitor node uses to compute
+         true inter-robot distances (NOT per-robot odometry, which is in
+         each robot's own drifting odom frame and not comparable). -->
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>gazebo</namespace>
+      </ros>
+      <update_rate>10.0</update_rate>
+    </plugin>
+
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>0 -16 14 0 0.6 1.5708</pose>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>
