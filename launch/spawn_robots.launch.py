@@ -3,7 +3,8 @@
 spawn_robots.launch.py — Staggered multi-robot spawner.
 
 Spawns all robots defined in scenario.py into a running Gazebo instance
-with 2-second stagger between each to avoid entity-creation race conditions.
+with 4.5-second stagger between each to avoid entity-creation race conditions
+and CPU/DDS contention.
 
 Uses IncludeLaunchDescription to invoke bringup_single.launch.py for each
 robot, which handles URDF→robot_description, spawn_entity, Nav2 bringup,

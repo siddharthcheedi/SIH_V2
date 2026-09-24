@@ -4,7 +4,7 @@ trial_baseline.launch.py — Run the uncoordinated baseline trial.
 
 Launches:
   1. Gazebo with warehouse.world
-  2. spawn_robots.launch.py (all 9 robots, staggered)
+  2. spawn_robots.launch.py (3-robot fleet: amr_1, amr_2, amr_6)
   3. goal_dispatcher.py (sends all goals simultaneously, no negotiation)
   4. collision_monitor.py (logs ground-truth collisions/near-misses)
 
@@ -60,6 +60,13 @@ def generate_launch_description():
         )],
     )
 
+    # Set PYTHONPATH so goal_dispatcher subprocess finds amr_fleet_core reliably
+    pkg_src = os.path.join(pkg_dir, 'src', 'amr_fleet_core')
+    existing_pythonpath = os.environ.get('PYTHONPATH', '')
+    set_pythonpath = SetEnvironmentVariable(
+        'PYTHONPATH', f"{pkg_src}:{existing_pythonpath}" if existing_pythonpath else pkg_src
+    )
+
     # Collision monitor (starts immediately)
     collision_monitor = TimerAction(
         period=5.0,
@@ -70,9 +77,10 @@ def generate_launch_description():
         )],
     )
 
-    # Goal dispatcher — waits for all robots to be up (~50-55s for 9 robots with 4.5s stagger)
+    # Goal dispatcher — waits for 3 robots to be up (~16-20s)
+    # Dispatches uncoordinated NavigateToPose goals simultaneously (baseline)
     goal_dispatcher = TimerAction(
-        period=55.0,
+        period=20.0,
         actions=[ExecuteProcess(
             cmd=['python3', '-m', 'amr_fleet_core.goal_dispatcher',
                  '--ros-args', '-p', 'use_sim_time:=true'],
@@ -83,6 +91,7 @@ def generate_launch_description():
     return LaunchDescription([
         set_fastdds_profile,
         set_fastdds_transports,
+        set_pythonpath,
         gazebo,
         spawn_robots,
         collision_monitor,

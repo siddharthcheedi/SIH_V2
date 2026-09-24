@@ -37,7 +37,9 @@ try:
 except ImportError:
     HAS_ROS2 = False
 
-from amr_fleet_core.negotiation.grid import path_to_cell_reservations
+from amr_fleet_core.negotiation.grid import (
+    path_to_cell_reservations, world_to_cell, cell_id
+)
 from amr_fleet_core.negotiation.reservation import Reservation, ReservationTable
 from amr_fleet_core.negotiation.priority import make_priority
 from amr_fleet_core.negotiation.deadlock import WaitForGraph
@@ -103,14 +105,21 @@ class FleetAgentNode(Node):
         self.state = 'WAIT_FOR_SERVERS'
         self._goal_handle = None
 
-        # Determine startup delay based on priority order to prevent startup race condition
+        # Determine startup delay based on priority order to prevent startup race condition.
+        # Each robot must evaluate on a SEPARATE timer tick so that the first robot's
+        # reservations are published and received by peers before the next robot evaluates.
+        # Delay must exceed NEGOTIATE_RETRY_INTERVAL (1.5s) per robot to guarantee
+        # one full tick gap between consecutive evaluations.
         robot_idx = 0
         for idx, r in enumerate(ROBOTS):
             if r.robot_id == robot_id:
                 robot_idx = idx
                 break
-        self._startup_delay = 1.0 + float(robot_idx) * 2.0
+        self._startup_delay = float(robot_idx) * 2.0
         self._nav_ready = False
+        self._planning_in_flight = False
+        self._init_time = None  # set on first state machine tick (sim time)
+        self._heartbeat_grace_seconds = 8.0  # skip heartbeat timeout checks during DDS discovery
 
         # ─── Publishers (scoped with robot_id) ──────────────────────
         self.intent_pub = self.create_publisher(String, f'/{robot_id}/intent', 10)
@@ -165,12 +174,36 @@ class FleetAgentNode(Node):
         self._publish_explain("Fleet agent initialized, waiting for Nav2 action servers")
         self.get_logger().info(f"Fleet agent {robot_id} initialized")
 
+    def _get_stationary_reservation(self, current_time: float) -> Reservation:
+        """Reserve current occupied cell so other agents see this robot as an obstacle."""
+        c = world_to_cell(self.current_x, self.current_y)
+        return Reservation(
+            robot_id=self.robot_id,
+            cell_id=cell_id(c),
+            t_start=max(0.0, current_time - 1.0),
+            t_end=current_time + 6.0,
+            priority_key=self.current_priority,
+        )
+
+    def _publish_stationary_presence(self, current_time: float) -> None:
+        """Publish our current physical location as an active reservation."""
+        res = [self._get_stationary_reservation(current_time)]
+        self.reservation_table.update_robot(self.robot_id, res)
+        self._publish_intent(res)
+
     def _step_state_machine(self) -> None:
         """Main autonomous coordination state machine."""
         if not self.config:
             return
 
+        now = self.get_clock().now().nanoseconds / 1e9
+        if self._init_time is None:
+            self._init_time = now
+
         if self.state == 'WAIT_FOR_SERVERS':
+            # While waiting, broadcast our stationary presence at spawn
+            self._publish_stationary_presence(now)
+
             if not self.navigate_client.server_is_ready():
                 return
             if not self._nav_ready:
@@ -184,13 +217,16 @@ class FleetAgentNode(Node):
 
             self.state = 'PLAN_AND_NEGOTIATE'
             self._publish_explain(
-                f"Action server ready. Preparing mission to ({self.config.goal_x:.1f}, {self.config.goal_y:.1f})"
+                f"Action server ready. Preparing dynamic mission to ({self.config.goal_x:.1f}, {self.config.goal_y:.1f})"
             )
 
         if self.state in ('PLAN_AND_NEGOTIATE', 'YIELDING', 'BACKOFF'):
-            self._negotiate_and_dispatch()
+            if not self._planning_in_flight:
+                self._negotiate_and_dispatch()
         elif self.state == 'NAVIGATING':
             self._check_proximity_yield()
+        elif self.state == 'COMPLETED':
+            self._publish_stationary_presence(now)
 
     def _check_proximity_yield(self) -> None:
         """Safety check: if a higher-priority peer is close ahead, yield immediately."""
@@ -206,97 +242,75 @@ class FleetAgentNode(Node):
                     )
                     self._goal_handle.cancel_goal_async()
                     self._goal_handle = None
+                    now = self.get_clock().now().nanoseconds / 1e9
+                    self._publish_stationary_presence(now)
                     self.state = 'YIELDING'
                     break
 
-    def _get_corridor_waypoints(
-        self, start_x: float, start_y: float, goal_x: float, goal_y: float, step: float = 0.3
-    ) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
-        """
-        Generate collision-free corridor waypoints matching warehouse aisles.
-
-        Rules:
-        1. Aisles are at x in [-8.0, -4.0, 0.0, 4.0, 8.0].
-        2. South cross-aisle (y <= -4.0) has parked robots at y = -6.0; robots must
-           NOT travel laterally across y = -6.0.
-        3. North cross-aisle (y: 3.5 .. 6.5) has ample clearance (4m wide).
-           Eastbound lateral moves (start_x < goal_x) use y = 4.8.
-           Westbound lateral moves (start_x > goal_x) use y = 5.8.
-        4. South-to-North: straight UP departure aisle (start_x), then lateral
-           in North cross-aisle to goal_x, then to goal_y.
-        5. North-to-South: lateral in North cross-aisle to goal_x, then straight
-           DOWN destination aisle (goal_x) to goal_y.
-
-        Returns (fine_waypoints, corner_waypoints).
-        """
-        aisles = [-8.0, -4.0, 0.0, 4.0, 8.0]
-        snap_start_x = min(aisles, key=lambda ax: abs(ax - start_x))
-        snap_goal_x = min(aisles, key=lambda ax: abs(ax - goal_x))
-
-        # Lane separation in North cross-aisle (3.5 to 6.5)
-        # Eastbound traffic (increasing x) takes y = 4.8; Westbound takes y = 5.8
-        cross_y = 4.8 if snap_start_x <= snap_goal_x else 5.8
-
-        corners: List[Tuple[float, float]] = [(start_x, start_y)]
-
-        # South-to-North: straight UP departure aisle (start_x), then cross-aisle to goal_x, then goal_y
-        if start_y < -4.0 and goal_y > 2.0:
-            corners.append((snap_start_x, cross_y))
-            if abs(snap_start_x - snap_goal_x) > 0.5:
-                corners.append((snap_goal_x, cross_y))
-            corners.append((goal_x, goal_y))
-
-        # North-to-South: cross-aisle to goal_x first, then straight DOWN destination aisle
-        elif start_y > 2.0 and goal_y < -4.0:
-            if abs(snap_start_x - snap_goal_x) > 0.5:
-                corners.append((snap_start_x, cross_y))
-                corners.append((snap_goal_x, cross_y))
-            corners.append((snap_goal_x, goal_y))
-            corners.append((goal_x, goal_y))
-
-        # South-to-South: bypass parked peers via North cross-aisle
-        elif start_y < -4.0 and goal_y < -4.0:
-            corners.append((snap_start_x, cross_y))
-            corners.append((snap_goal_x, cross_y))
-            corners.append((goal_x, goal_y))
-
-        # North-to-North
-        elif start_y > 2.0 and goal_y > 2.0:
-            corners.append((snap_start_x, cross_y))
-            corners.append((snap_goal_x, cross_y))
-            corners.append((goal_x, goal_y))
-
-        else:
-            corners.append((goal_x, goal_y))
-
-        # Deduplicate consecutive corners
-        dedup_corners: List[Tuple[float, float]] = []
-        for pt in corners:
-            if not dedup_corners or math.hypot(pt[0] - dedup_corners[-1][0], pt[1] - dedup_corners[-1][1]) > 0.1:
-                dedup_corners.append(pt)
-
-        # Fine-grained interpolation for space-time cell reservations
-        waypoints: List[Tuple[float, float]] = []
-        for i in range(len(dedup_corners) - 1):
-            x1, y1 = dedup_corners[i]
-            x2, y2 = dedup_corners[i + 1]
-            dist = math.hypot(x2 - x1, y2 - y1)
-            num_pts = max(2, int(dist / step))
-            for j in range(num_pts):
-                alpha = j / float(num_pts)
-                waypoints.append((x1 + alpha * (x2 - x1), y1 + alpha * (y2 - y1)))
-        waypoints.append((goal_x, goal_y))
-        return waypoints, dedup_corners
-
     def _negotiate_and_dispatch(self) -> None:
-        """Evaluate path reservations against peers and proceed or yield."""
+        """Compute path dynamically on the spot, evaluate reservations, and proceed or yield."""
+        goal_x = self.config.goal_x
+        goal_y = self.config.goal_y
+
+        if self.compute_path_client.server_is_ready():
+            self._planning_in_flight = True
+            goal_msg = ComputePathToPose.Goal()
+            goal_msg.start = PoseStamped()
+            goal_msg.start.header.frame_id = 'map'
+            goal_msg.start.header.stamp = self.get_clock().now().to_msg()
+            goal_msg.start.pose.position.x = float(self.current_x)
+            goal_msg.start.pose.position.y = float(self.current_y)
+            goal_msg.start.pose.orientation.w = 1.0
+
+            goal_msg.goal = PoseStamped()
+            goal_msg.goal.header.frame_id = 'map'
+            goal_msg.goal.header.stamp = self.get_clock().now().to_msg()
+            goal_msg.goal.pose.position.x = float(goal_x)
+            goal_msg.goal.pose.position.y = float(goal_y)
+            goal_msg.goal.pose.orientation.w = 1.0
+            goal_msg.use_start = True
+
+            future = self.compute_path_client.send_goal_async(goal_msg)
+            future.add_done_callback(self._on_compute_path_goal_response)
+        else:
+            waypoints, corners = self._get_corridor_waypoints(
+                self.current_x, self.current_y, goal_x, goal_y
+            )
+            self._evaluate_and_execute(waypoints, corners)
+
+    def _on_compute_path_goal_response(self, future) -> None:
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self._planning_in_flight = False
+            waypoints, corners = self._get_corridor_waypoints(
+                self.current_x, self.current_y, self.config.goal_x, self.config.goal_y
+            )
+            self._evaluate_and_execute(waypoints, corners)
+            return
+
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self._on_compute_path_result)
+
+    def _on_compute_path_result(self, future) -> None:
+        self._planning_in_flight = False
+        result = future.result().result
+        waypoints = _ros2_path_to_waypoints(result.path)
+        if not waypoints:
+            waypoints, corners = self._get_corridor_waypoints(
+                self.current_x, self.current_y, self.config.goal_x, self.config.goal_y
+            )
+        else:
+            corners = None
+        self._evaluate_and_execute(waypoints, corners)
+
+    def _evaluate_and_execute(
+        self, waypoints: List[Tuple[float, float]], corners: Optional[List[Tuple[float, float]]] = None
+    ) -> None:
+        """Evaluate candidate reservations against peer reservation table."""
         now = self.get_clock().now().nanoseconds / 1e9
         goal_x = self.config.goal_x
         goal_y = self.config.goal_y
 
-        waypoints, corners = self._get_corridor_waypoints(
-            self.current_x, self.current_y, goal_x, goal_y
-        )
         if not waypoints:
             return
 
@@ -315,6 +329,32 @@ class FleetAgentNode(Node):
             for cr in cell_reservations
         ]
 
+        # ─── Physical Occupancy Check ──────────────────────────────
+        # Even if we have higher priority, if another robot is currently sitting
+        # stationary in one of our immediate cells ahead, we physically cannot pass through it!
+        currently_occupied = {}
+        for other_id, other_res in self.reservation_table._tables.items():
+            if other_id == self.robot_id:
+                continue
+            for r in other_res:
+                if r.t_start <= now <= r.t_end:
+                    currently_occupied[r.cell_id] = other_id
+
+        physical_blocker = None
+        for cr in candidate_reservations[:8]:
+            if cr.cell_id in currently_occupied:
+                physical_blocker = currently_occupied[cr.cell_id]
+                break
+
+        if physical_blocker:
+            self._publish_stationary_presence(now)
+            self.state = 'YIELDING'
+            self._publish_explain(
+                f"YIELD: Path ahead physically occupied by {physical_blocker}. Waiting for clearance..."
+            )
+            return
+
+        # ─── Standard Space-Time Negotiation ───────────────────────
         result = self.negotiator.evaluate(
             candidate_reservations=candidate_reservations,
             my_priority=self.current_priority,
@@ -336,6 +376,7 @@ class FleetAgentNode(Node):
                 self.get_logger().info(f"Cancelling active goal to yield to {result.yielding_to}")
                 self._goal_handle.cancel_goal_async()
                 self._goal_handle = None
+            self._publish_stationary_presence(now)
             self.state = 'YIELDING'
             self._publish_explain(
                 f"YIELD: Yielding to {result.yielding_to} ({result.yield_reason}). Waiting for corridor clearance..."
@@ -345,15 +386,81 @@ class FleetAgentNode(Node):
             if self._goal_handle is not None and self.state == 'NAVIGATING':
                 self._goal_handle.cancel_goal_async()
                 self._goal_handle = None
+            self._publish_stationary_presence(now)
             self.state = 'BACKOFF'
             self._publish_explain(
                 f"DEADLOCK: Cycle detected {result.deadlock_cycle}. Backing off."
             )
 
+    def _get_corridor_waypoints(
+        self, start_x: float, start_y: float, goal_x: float, goal_y: float, step: float = 0.3
+    ) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
+        """
+        Fallback corridor waypoints matching warehouse aisles.
+        South robots turn laterally at y = 3.8 (clear of shelves at y = 3.0 and parked North robots at y = 5.0).
+        North robots turn laterally at y = 6.0 (between y = 5.0 and north wall y = 7.0).
+        """
+        aisles = [-8.0, -4.0, 0.0, 4.0, 8.0]
+        snap_start_x = min(aisles, key=lambda ax: abs(ax - start_x))
+        snap_goal_x = min(aisles, key=lambda ax: abs(ax - goal_x))
+
+        cross_y_south = 3.8
+        cross_y_north = 6.0
+
+        corners: List[Tuple[float, float]] = [(start_x, start_y)]
+
+        # South-to-North: straight UP departure aisle, turn at y = 3.8
+        if start_y < -4.0 and goal_y > 2.0:
+            corners.append((snap_start_x, cross_y_south))
+            if abs(snap_start_x - snap_goal_x) > 0.5:
+                corners.append((snap_goal_x, cross_y_south))
+            corners.append((goal_x, goal_y))
+
+        # North-to-South: lateral at y = 6.0 first, then straight down
+        elif start_y > 2.0 and goal_y < -4.0:
+            corners.append((snap_start_x, cross_y_north))
+            if abs(snap_start_x - snap_goal_x) > 0.5:
+                corners.append((snap_goal_x, cross_y_north))
+            corners.append((snap_goal_x, goal_y))
+            corners.append((goal_x, goal_y))
+
+        # South-to-South
+        elif start_y < -4.0 and goal_y < -4.0:
+            corners.append((snap_start_x, cross_y_south))
+            corners.append((snap_goal_x, cross_y_south))
+            corners.append((goal_x, goal_y))
+
+        # North-to-North
+        elif start_y > 2.0 and goal_y > 2.0:
+            corners.append((snap_start_x, cross_y_north))
+            corners.append((snap_goal_x, cross_y_north))
+            corners.append((goal_x, goal_y))
+
+        else:
+            corners.append((goal_x, goal_y))
+
+        # Deduplicate consecutive corners
+        dedup_corners: List[Tuple[float, float]] = []
+        for pt in corners:
+            if not dedup_corners or math.hypot(pt[0] - dedup_corners[-1][0], pt[1] - dedup_corners[-1][1]) > 0.1:
+                dedup_corners.append(pt)
+
+        waypoints: List[Tuple[float, float]] = []
+        for i in range(len(dedup_corners) - 1):
+            x1, y1 = dedup_corners[i]
+            x2, y2 = dedup_corners[i + 1]
+            dist = math.hypot(x2 - x1, y2 - y1)
+            num_pts = max(2, int(dist / step))
+            for j in range(num_pts):
+                alpha = j / float(num_pts)
+                waypoints.append((x1 + alpha * (x2 - x1), y1 + alpha * (y2 - y1)))
+        waypoints.append((goal_x, goal_y))
+        return waypoints, dedup_corners
+
     def _send_navigation_goal(
         self, goal_x: float, goal_y: float, corners: Optional[List[Tuple[float, float]]] = None
     ) -> None:
-        """Send navigation action goal to Nav2 (NavigateThroughPoses if available and corners exist, else NavigateToPose)."""
+        """Send navigation action goal to Nav2."""
         if corners and len(corners) > 1 and self.navigate_through_poses_client.server_is_ready():
             goal_msg = NavigateThroughPoses.Goal()
             poses = []
@@ -393,20 +500,25 @@ class FleetAgentNode(Node):
 
     def _on_goal_result(self, future) -> None:
         status = future.result().status
-        # Status 4 corresponds to GoalStatus.STATUS_SUCCEEDED
-        if status == 4:
+        now = self.get_clock().now().nanoseconds / 1e9
+        if status == 4:  # SUCCEEDED
             self._publish_explain(
                 f"SUCCESS: Goal reached at ({self.config.goal_x:.1f}, {self.config.goal_y:.1f})! Mission complete."
             )
-            self.negotiator.clear_own_reservations()
-            self._publish_intent([])
+            self._publish_stationary_presence(now)
             self.state = 'COMPLETED'
+        elif self.state == 'YIELDING':
+            # Goal was canceled by _check_proximity_yield — stay in YIELDING
+            # until the corridor clears, don't override with PLAN_AND_NEGOTIATE.
+            self._publish_stationary_presence(now)
+            self._publish_explain(
+                f"Navigation canceled during proximity yield. Holding position..."
+            )
         else:
             self._publish_explain(
                 f"Navigation ended with status {status}. Re-evaluating path..."
             )
-            self.negotiator.clear_own_reservations()
-            self._publish_intent([])
+            self._publish_stationary_presence(now)
             self.state = 'PLAN_AND_NEGOTIATE'
 
     def _odom_cb(self, msg: Odometry) -> None:
@@ -457,6 +569,10 @@ class FleetAgentNode(Node):
 
     def _check_heartbeats(self) -> None:
         sim_time = self.get_clock().now().nanoseconds / 1e9
+        # Skip heartbeat timeout checks during initial grace period to avoid
+        # false-positive peer deaths while DDS discovery is still completing.
+        if self._init_time is not None and (sim_time - self._init_time) < self._heartbeat_grace_seconds:
+            return
         newly_dead = self.heartbeat_monitor.check_timeouts(sim_time)
         for dead_id in newly_dead:
             self._publish_explain(

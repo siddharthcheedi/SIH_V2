@@ -4,7 +4,7 @@ trial_negotiated.launch.py — Run the negotiated (coordinated) trial.
 
 Launches:
   1. Gazebo with warehouse.world
-  2. spawn_robots.launch.py (all 9 robots, staggered)
+  2. spawn_robots.launch.py (3-robot fleet: amr_1, amr_2, amr_6)
   3. Per-robot fleet_agent nodes (negotiation + ORCA + heartbeat)
   4. Blackboard node (information only)
   5. collision_monitor.py (logs ground-truth collisions/near-misses)
@@ -70,9 +70,17 @@ def generate_launch_description():
         )],
     )
 
-    # Per-robot fleet agent nodes — launched once all 9 robots are active
+    # Set PYTHONPATH so fleet_agent subprocesses find amr_fleet_core reliably
+    pkg_src = os.path.join(pkg_dir, 'src', 'amr_fleet_core')
+    existing_pythonpath = os.environ.get('PYTHONPATH', '')
+    set_pythonpath = SetEnvironmentVariable(
+        'PYTHONPATH', f"{pkg_src}:{existing_pythonpath}" if existing_pythonpath else pkg_src
+    )
+
+    # Per-robot fleet agent nodes — launched once all 3 robots are active (~16s)
+    # Fleet: amr_1 (Red), amr_2 (Blue), amr_6 (Cyan)
     fleet_agents = TimerAction(
-        period=50.0,
+        period=20.0,
         actions=[
             ExecuteProcess(
                 cmd=['python3', '-m', 'amr_fleet_core.fleet_agent',
@@ -85,7 +93,7 @@ def generate_launch_description():
 
     # Blackboard (information only)
     blackboard = TimerAction(
-        period=45.0,
+        period=18.0,
         actions=[ExecuteProcess(
             cmd=['python3', '-m', 'amr_fleet_core.blackboard_node',
                  '--ros-args', '-p', 'use_sim_time:=true'],
@@ -105,7 +113,7 @@ def generate_launch_description():
 
     # Dashboard bridge
     dashboard_bridge = TimerAction(
-        period=35.0,
+        period=15.0,
         actions=[ExecuteProcess(
             cmd=['python3', '-m', 'amr_fleet_core.dashboard_bridge',
                  '--ros-args', '-p', 'use_sim_time:=true'],
@@ -116,6 +124,7 @@ def generate_launch_description():
     return LaunchDescription([
         set_fastdds_profile,
         set_fastdds_transports,
+        set_pythonpath,
         gazebo,
         spawn_robots,
         fleet_agents,

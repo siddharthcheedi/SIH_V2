@@ -46,7 +46,7 @@ class RobotConfig:
 # Goals spread across the north cross-aisle and opposite aisle entries.
 # Every aisle and every chokepoint gets traffic in both directions.
 
-ROBOTS: List[RobotConfig] = [
+ALL_ROBOTS: List[RobotConfig] = [
     RobotConfig(
         robot_id='amr_1',
         spawn_x=-8.0, spawn_y=-6.0, spawn_yaw=0.0,
@@ -101,6 +101,11 @@ ROBOTS: List[RobotConfig] = [
         goal_x=8.0, goal_y=-6.0,
         color_rgba=(0.9, 0.9, 0.9, 1.0), color_name='white',
     ),
+]
+
+# Active fleet for benchmark (3-robot conflict & negotiation trial: amr_1, amr_2, amr_6)
+ROBOTS: List[RobotConfig] = [
+    r for r in ALL_ROBOTS if r.robot_id in ('amr_1', 'amr_2', 'amr_6')
 ]
 
 # Quick-access dict keyed by robot_id.
