@@ -397,43 +397,88 @@ class FleetAgentNode(Node):
     ) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
         """
         Fallback corridor waypoints matching warehouse aisles.
-        South robots turn laterally at y = 3.8 (clear of shelves at y = 3.0 and parked North robots at y = 5.0).
-        North robots turn laterally at y = 6.0 (between y = 5.0 and north wall y = 7.0).
+
+        Only the 3 true inter-shelf aisles (x = -4, 0, 4) are used for
+        north/south traversal.  x = ±8 are narrow wall margins — the
+        inflated costmap around shelves + walls makes them unplannable
+        for NavFn, so they are NOT listed as aisles.
+
+        Robots whose current or goal position is outside the aisle
+        columns are routed laterally into the nearest real aisle first,
+        using the appropriate cross-aisle corridor (y = -5.5 for the
+        south cross-aisle, y = 3.8 / 6.0 for north).
+
+        South robots turn laterally at y = 3.8 (clear of shelves at
+        y = 3.0 and parked North robots at y = 5.0).
+        North robots turn laterally at y = 6.0 (between y = 5.0 and
+        north wall y = 7.0).
         """
-        aisles = [-8.0, -4.0, 0.0, 4.0, 8.0]
+        # Only real inter-shelf aisles — NOT x=±8 (wall margins)
+        aisles = [-4.0, 0.0, 4.0]
         snap_start_x = min(aisles, key=lambda ax: abs(ax - start_x))
         snap_goal_x = min(aisles, key=lambda ax: abs(ax - goal_x))
 
         cross_y_south = 3.8
         cross_y_north = 6.0
+        # Lateral movement in the south cross-aisle uses y = -5.5
+        # (center of the open south cross-aisle, clear of shelves and spawn rows)
+        cross_y_lateral_south = -5.5
 
         corners: List[Tuple[float, float]] = [(start_x, start_y)]
 
-        # South-to-North: straight UP departure aisle, turn at y = 3.8
+        # Helper: if the robot is far from its snap aisle, insert a
+        # lateral jog along the appropriate cross-aisle first.
+        needs_start_lateral = abs(start_x - snap_start_x) > 0.5
+        needs_goal_lateral = abs(goal_x - snap_goal_x) > 0.5
+
+        # South-to-North: go to nearest aisle, straight UP, turn at y = 3.8
         if start_y < -4.0 and goal_y > 2.0:
+            if needs_start_lateral:
+                corners.append((start_x, cross_y_lateral_south))
+                corners.append((snap_start_x, cross_y_lateral_south))
             corners.append((snap_start_x, cross_y_south))
             if abs(snap_start_x - snap_goal_x) > 0.5:
                 corners.append((snap_goal_x, cross_y_south))
+            if needs_goal_lateral:
+                corners.append((snap_goal_x, goal_y))
             corners.append((goal_x, goal_y))
 
-        # North-to-South: lateral at y = 6.0 first, then straight down
+        # North-to-South: lateral at y = 6.0 first, go to aisle, then straight down
         elif start_y > 2.0 and goal_y < -4.0:
-            corners.append((snap_start_x, cross_y_north))
+            if needs_start_lateral:
+                corners.append((start_x, cross_y_north))
+                corners.append((snap_start_x, cross_y_north))
+            else:
+                corners.append((snap_start_x, cross_y_north))
             if abs(snap_start_x - snap_goal_x) > 0.5:
                 corners.append((snap_goal_x, cross_y_north))
-            corners.append((snap_goal_x, goal_y))
+            corners.append((snap_goal_x, cross_y_lateral_south))
+            if needs_goal_lateral:
+                corners.append((goal_x, cross_y_lateral_south))
             corners.append((goal_x, goal_y))
 
         # South-to-South
         elif start_y < -4.0 and goal_y < -4.0:
+            if needs_start_lateral:
+                corners.append((start_x, cross_y_lateral_south))
+                corners.append((snap_start_x, cross_y_lateral_south))
             corners.append((snap_start_x, cross_y_south))
             corners.append((snap_goal_x, cross_y_south))
+            if needs_goal_lateral:
+                corners.append((snap_goal_x, cross_y_lateral_south))
+                corners.append((goal_x, cross_y_lateral_south))
             corners.append((goal_x, goal_y))
 
         # North-to-North
         elif start_y > 2.0 and goal_y > 2.0:
-            corners.append((snap_start_x, cross_y_north))
+            if needs_start_lateral:
+                corners.append((start_x, cross_y_north))
+                corners.append((snap_start_x, cross_y_north))
+            else:
+                corners.append((snap_start_x, cross_y_north))
             corners.append((snap_goal_x, cross_y_north))
+            if needs_goal_lateral:
+                corners.append((goal_x, cross_y_north))
             corners.append((goal_x, goal_y))
 
         else:
