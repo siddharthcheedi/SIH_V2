@@ -18,7 +18,7 @@
 | Radio | `comms.py` | range-limited, delayed, optionally lossy; the ONLY channel between robots |
 | Engine | `engine.py` | physical world only: carries messages, moves bodies, measures. Never plans. |
 
-## Assumptions (state them in your write-up)
+## Assumptions
 * Every robot carries the floor plan (static map). Obstacle changes are discovered when a planned cell turns out blocked.
 * Orders are announced to all robots by an order system (task board); robots report pick-up / delivery to it. It makes no allocation decisions.
 * Radio safe envelope (measured): **range >= 3.5 cells for delays up to 4 ticks (0.4 s)**; range 3 needs delay <= 2.
