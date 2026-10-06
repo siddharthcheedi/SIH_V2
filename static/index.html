@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>AMR Fleet Coordinator — SIH26123</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--surf:#161b22;--surf2:#21262d;--border:#30363d;
+  --text:#c9d1d9;--muted:#8b949e;--accent:#58a6ff;
+  --green:#3fb950;--red:#f85149;--orange:#d29922;--purple:#bc8cff;--yellow:#e3b341;
+}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;
+     font-size:13px;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* TOP BAR */
+#topbar{background:var(--surf);border-bottom:1px solid var(--border);
+        padding:6px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0;z-index:10}
+#topbar h1{font-size:14px;font-weight:700;color:var(--accent);white-space:nowrap;margin-right:4px}
+.chip{background:var(--surf2);border:1px solid var(--border);border-radius:20px;
+      padding:2px 9px;font-size:11px;color:var(--muted);white-space:nowrap}
+.stat{display:flex;flex-direction:column;align-items:center;padding:3px 10px;
+      background:var(--surf2);border:1px solid var(--border);border-radius:6px;min-width:55px}
+.stat .v{font-size:15px;font-weight:700;color:var(--accent);line-height:1.2}
+.stat .l{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+#s-coll .v{color:var(--green)}
+#s-coll.bad .v{color:var(--red);animation:blink .5s infinite}
+#s-dead .v{color:var(--yellow)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* TABS */
+#tabs{display:flex;gap:2px;padding:5px 10px;background:var(--bg);
+      border-bottom:1px solid var(--border);flex-shrink:0}
+.tab{padding:4px 14px;border-radius:5px;cursor:pointer;font-size:12px;
+     color:var(--muted);background:none;border:none;transition:all .12s}
+.tab:hover{background:var(--surf2);color:var(--text)}
+.tab.active{background:var(--accent);color:#0d1117;font-weight:600}
+
+/* MAIN */
+#main{display:flex;flex:1;overflow:hidden;min-height:0}
+
+/* CANVAS */
+#canvas-wrap{flex:1;position:relative;overflow:hidden;background:#090d14;
+             display:flex;align-items:center;justify-content:center;min-width:0}
+canvas#sim{cursor:crosshair}
+#overlay-tags{position:absolute;top:8px;left:8px;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none}
+.otag{background:rgba(0,0,0,.75);border:1px solid var(--border);border-radius:4px;
+      padding:2px 8px;font-size:10px;color:var(--muted)}
+
+/* RIGHT PANEL */
+#right{width:310px;min-width:260px;background:var(--surf);border-left:1px solid var(--border);
+       display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.pview{display:none;flex-direction:column;flex:1;overflow:hidden}
+.pview.active{display:flex}
+
+/* SECTIONS */
+.sec{border-bottom:1px solid var(--border);padding:9px 11px;flex-shrink:0}
+.sec-title{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;
+           letter-spacing:.5px;margin-bottom:7px;display:flex;align-items:center;gap:5px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
+
+/* BUTTONS */
+.btn{padding:4px 9px;border-radius:5px;border:1px solid var(--border);
+     background:var(--surf2);color:var(--text);cursor:pointer;font-size:11px;transition:all .12s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#0d1117;font-weight:600}
+.btn.danger{background:var(--red);border-color:var(--red);color:#fff}
+.btn.warn{background:var(--orange);border-color:var(--orange);color:#0d1117}
+.btn-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:5px}
+
+/* ROBOT CARDS */
+#robot-list{overflow-y:auto;flex:1;min-height:0}
+.rcard{padding:7px 10px;border-bottom:1px solid var(--border);display:flex;
+       align-items:center;gap:7px;cursor:pointer;transition:background .1s}
+.rcard:hover,.rcard.sel{background:var(--surf2)}
+.rcard.sel{border-left:3px solid var(--accent)}
+.rdot{width:13px;height:13px;border-radius:50%;flex-shrink:0}
+.rinfo{flex:1;min-width:0}
+.rname{font-weight:600;font-size:12px;display:flex;align-items:center;gap:4px}
+.rstate{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.batbar{height:3px;border-radius:2px;background:var(--surf2);margin-top:3px}
+.batfill{height:100%;border-radius:2px;background:var(--green);transition:width .3s}
+.batfill.lo{background:var(--red)}
+.batfill.md{background:var(--orange)}
+.brain-badge{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--surf2);
+             border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.brain-badge.active{border-color:var(--orange);color:var(--orange)}
+
+/* VIZ TOGGLES */
+.vtrow{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.vtlbl{font-size:11px;color:var(--muted);width:110px;flex-shrink:0}
+.toggle{position:relative;width:32px;height:17px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.tslider{position:absolute;inset:0;background:var(--surf2);border-radius:9px;
+         cursor:pointer;transition:.2s;border:1px solid var(--border)}
+.tslider:before{content:'';position:absolute;width:11px;height:11px;left:2px;top:2px;
+                background:var(--muted);border-radius:50%;transition:.2s}
+input:checked+.tslider{background:var(--accent)}
+input:checked+.tslider:before{transform:translateX(15px);background:#fff}
+
+/* LAYOUT CARDS */
+.lgrid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.lcard{border:1px solid var(--border);border-radius:5px;padding:7px;cursor:pointer;
+       background:var(--surf2);transition:all .12s;text-align:center}
+.lcard:hover,.lcard.active{border-color:var(--accent);background:#1c2128}
+.lname{font-size:11px;font-weight:600}
+.lsize{font-size:9px;color:var(--muted)}
+
+/* EVENT LOG */
+#evlog{flex:1;overflow-y:auto;padding:4px 9px;font-size:10px;font-family:monospace;
+       background:var(--bg);min-height:0}
+.evline{color:var(--muted);padding:2px 0;border-bottom:1px solid #21262d}
+.evline.new{color:var(--text)}
+.evline.warn{color:var(--orange)}
+.evline.err{color:var(--red)}
+
+/* EDITOR TOOLBAR */
+#ed-toolbar{padding:7px 10px;border-bottom:1px solid var(--border);
+            display:flex;gap:5px;flex-wrap:wrap;align-items:center;flex-shrink:0}
+.ctool{padding:3px 9px;border-radius:4px;border:2px solid transparent;
+       cursor:pointer;font-size:11px;font-weight:600;transition:all .12s}
+.ctool:hover,.ctool.active{border-color:#fff}
+
+/* MODAL */
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;
+       display:none;align-items:center;justify-content:center}
+#modal.show{display:flex}
+.mbox{background:var(--surf);border:1px solid var(--border);border-radius:10px;
+      padding:18px;min-width:270px}
+.mbox h3{margin-bottom:12px;font-size:14px}
+.frow{margin-bottom:9px}
+.frow label{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+.frow input,.frow select{width:100%;padding:5px 9px;background:var(--surf2);
+  border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:12px}
+.frow input:focus,.frow select:focus{outline:none;border-color:var(--accent)}
+
+/* TOOLTIP */
+#tip{position:fixed;background:rgba(13,17,23,.95);border:1px solid var(--border);
+     border-radius:6px;padding:5px 9px;font-size:11px;pointer-events:none;
+     display:none;z-index:100;max-width:200px;line-height:1.6}
+
+/* CHART */
+#chart-wrap{padding:8px 10px;flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* ALGO PANEL */
+#algo-status{padding:9px 11px;overflow-y:auto;flex:1;min-height:0}
+.algo-block{background:var(--surf2);border-radius:6px;padding:8px;margin-bottom:8px}
+.algo-title{font-size:11px;font-weight:700;margin-bottom:5px}
+.algo-row{display:flex;justify-content:space-between;font-size:11px;
+          border-bottom:1px solid var(--border);padding:2px 0}
+.algo-row:last-child{border:none}
+
+/* SCROLLBARS */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <h1>⚡ AMR Fleet Coordinator</h1>
+  <span class="chip">SIH26123 | BEL</span>
+
+  <div class="stat" id="s-coll"><span class="v" id="v-coll">0</span><span class="l">Collisions</span></div>
+  <div class="stat" id="s-dead"><span class="v" id="v-dead">0</span><span class="l">Deadlocks</span></div>
+  <div class="stat"><span class="v" id="v-done" style="color:var(--green)">0</span><span class="l">Tasks Done</span></div>
+  <div class="stat"><span class="v" id="v-robots" style="color:var(--purple)">0</span><span class="l">Robots</span></div>
+  <div class="stat"><span class="v" id="v-avg" style="color:var(--yellow)">—</span><span class="l">Avg (s)</span></div>
+  <div class="stat" id="s-imp" style="display:none">
+    <span class="v" id="v-imp" style="color:var(--green)">—</span><span class="l">vs Baseline</span>
+  </div>
+
+  <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+    <span id="mode-chip" class="chip" style="border-color:var(--accent);color:var(--accent)">PIBT+MAPF+ORCA</span>
+    <button class="btn" id="pause-btn" onclick="togglePause()">⏸ Pause</button>
+    <span style="font-size:10px;color:var(--muted)">Speed</span>
+    <input type="range" id="speed-sl" min="0.5" max="8" step="0.5" value="1"
+           style="width:70px;accent-color:var(--accent)" oninput="setSpeed(this.value)"/>
+    <span id="speed-lbl" style="font-size:11px;color:var(--accent);width:22px">1×</span>
+  </div>
+</div>
+
+<!-- TABS -->
+<div id="tabs">
+  <button class="tab active" onclick="switchTab('sim')">🗺 Simulation</button>
+  <button class="tab" onclick="switchTab('algo')">🧠 Algorithm Viz</button>
+  <button class="tab" onclick="switchTab('editor')">✏️ Floor Plan Editor</button>
+  <button class="tab" onclick="switchTab('analytics')">📊 Analytics</button>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+
+  <!-- CANVAS -->
+  <div id="canvas-wrap">
+    <canvas id="sim"></canvas>
+    <div id="overlay-tags">
+      <span class="otag" id="ot-layout">Standard Warehouse</span>
+      <span class="otag" id="ot-tick">Tick: 0</span>
+      <span class="otag" id="ot-size">—</span>
+      <span class="otag" id="ot-mode">PIBT+MAPF+ORCA</span>
+      <span class="otag" id="ot-cursor" style="color:var(--accent)">Click=obstacle · Alt+drag=pan · Scroll=zoom</span>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div id="right">
+
+    <!-- ══ SIMULATION PANEL ══ -->
+    <div class="pview active" id="pview-sim">
+      <div class="sec">
+        <div class="sec-title"><span class="dot"></span>Fleet Controls</div>
+        <div class="btn-row">
+          <button class="btn pri" onclick="openModal()">+ Robot</button>
+          <button class="btn" onclick="addTask()">📦 Task</button>
+          <button class="btn warn" onclick="toggleMode()" id="mode-btn">⚖ Baseline</button>
+          <button class="btn danger" onclick="doReset()">↺ Reset</button>
+        </div>
+        <div style="font-size:10px;color:var(--muted)">
+          Click canvas = toggle obstacle &nbsp;|&nbsp; R = fit view
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-title"><span class="dot" style="background:var(--purple)"></span>Layout Library</div>
+        <div class="lgrid" id="lgrid"></div>
+      </div>
+
+      <div class="sec" style="padding-bottom:0">
+        <div class="sec-title"><span class="dot" style="background:var(--green)"></span>
+          Robot Fleet <span id="fleet-label" style="color:var(--muted);font-size:10px;font-weight:400"></span>
+        </div>
+      </div>
+      <div id="robot-list"></div>
+
+      <div class="sec" style="padding-bottom:4px;flex-shrink:0">
+        <div class="sec-title"><span class="dot" style="background:var(--orange)"></span>Event Log</div>
+      </div>
+      <div id="evlog"></div>
+    </div>
+
+    <!-- ══ ALGORITHM VIZ PANEL ══ -->
+    <div class="pview" id="pview-algo">
+      <div class="sec">
+        <div class="sec-title"><span class="dot" style="background:var(--yellow)"></span>Overlay Toggles</div>
+        <div class="vtrow"><span class="vtlbl">PIBT Priorities</span>
+          <label class="toggle"><input type="checkbox" id="vt-pibt-pri" checked><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Number badges</span></div>
+        <div class="vtrow"><span class="vtlbl">PIBT Conflicts</span>
+          <label class="toggle"><input type="checkbox" id="vt-pibt-conf" checked><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Red conflict lines</span></div>
+        <div class="vtrow"><span class="vtlbl">PIBT Claims</span>
+          <label class="toggle"><input type="checkbox" id="vt-pibt-claim"><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Claimed cells</span></div>
+        <div class="vtrow"><span class="vtlbl">ORCA Velocities</span>
+          <label class="toggle"><input type="checkbox" id="vt-orca-v" checked><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Blue/green arrows</span></div>
+        <div class="vtrow"><span class="vtlbl">ORCA Half-Planes</span>
+          <label class="toggle"><input type="checkbox" id="vt-orca-hp"><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">VO boundaries</span></div>
+        <div class="vtrow"><span class="vtlbl">CBAA Bids</span>
+          <label class="toggle"><input type="checkbox" id="vt-cbaa"><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Bid values</span></div>
+        <div class="vtrow"><span class="vtlbl">Brain Decisions</span>
+          <label class="toggle"><input type="checkbox" id="vt-brain" checked><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Decision badges</span></div>
+        <div class="vtrow"><span class="vtlbl">Deadlock Cycles</span>
+          <label class="toggle"><input type="checkbox" id="vt-dl" checked><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Cycle highlights</span></div>
+        <div class="vtrow"><span class="vtlbl">Task Paths</span>
+          <label class="toggle"><input type="checkbox" id="vt-paths" checked><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Route lines</span></div>
+        <div class="vtrow"><span class="vtlbl">Congestion Map</span>
+          <label class="toggle"><input type="checkbox" id="vt-heat"><span class="tslider"></span></label>
+          <span style="font-size:10px;color:var(--muted)">Traffic heatmap</span></div>
+      </div>
+      <div id="algo-status"></div>
+    </div>
+
+    <!-- ══ EDITOR PANEL ══ -->
+    <div class="pview" id="pview-editor">
+      <div id="ed-toolbar">
+        <strong style="font-size:10px;color:var(--muted);margin-right:3px">Paint:</strong>
+        <div class="ctool active" style="background:#1a1e26;color:#888" onclick="setTool(0,this)" title="Free space">Free</div>
+        <div class="ctool" style="background:#5d3a20;color:#e89" onclick="setTool(1,this)" title="Wall/shelf">Wall</div>
+        <div class="ctool" style="background:#1a3a30;color:#3f9" onclick="setTool(2,this)" title="Drop zone">Drop</div>
+        <div class="ctool" style="background:#253a1a;color:#9f3" onclick="setTool(3,this)" title="Pickup point">Pickup</div>
+        <div class="ctool" style="background:#1a243a;color:#39f" onclick="setTool(4,this)" title="Robot spawn">Spawn</div>
+        <div style="flex:1"></div>
+        <button class="btn" onclick="saveLayout()">💾</button>
+      </div>
+      <div style="padding:8px 10px">
+        <div class="sec-title"><span class="dot"></span>Cell Guide</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px">
+          <div style="font-size:10px;display:flex;align-items:center;gap:5px">
+            <div style="width:12px;height:12px;background:#1a1e26;border:1px solid #444;border-radius:2px"></div>Free path
+          </div>
+          <div style="font-size:10px;display:flex;align-items:center;gap:5px">
+            <div style="width:12px;height:12px;background:#5d3a20;border:1px solid #444;border-radius:2px"></div>Shelf/Wall
+          </div>
+          <div style="font-size:10px;display:flex;align-items:center;gap:5px">
+            <div style="width:12px;height:12px;background:#1a3a30;border:1px solid #444;border-radius:2px"></div>Drop Zone
+          </div>
+          <div style="font-size:10px;display:flex;align-items:center;gap:5px">
+            <div style="width:12px;height:12px;background:#253a1a;border:1px solid #444;border-radius:2px"></div>Pickup Point
+          </div>
+          <div style="font-size:10px;display:flex;align-items:center;gap:5px">
+            <div style="width:12px;height:12px;background:#1a243a;border:1px solid #444;border-radius:2px"></div>Spawn Point
+          </div>
+          <div style="font-size:10px;display:flex;align-items:center;gap:5px">
+            <div style="width:12px;height:12px;background:#7a0000;border:1px solid #f44;border-radius:2px"></div>Dynamic Obstacle
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:10px;color:var(--muted)">
+          Click cells to paint. Switch to Simulation tab to run. Robots respect any layout automatically.
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ ANALYTICS PANEL ══ -->
+    <div class="pview" id="pview-analytics">
+      <div class="sec">
+        <div class="sec-title"><span class="dot" style="background:var(--green)"></span>Performance</div>
+        <div id="metrics-detail" style="font-size:11px;line-height:1.9"></div>
+      </div>
+      <div id="chart-wrap">
+        <div class="sec-title" style="margin-bottom:6px">
+          <span class="dot" style="background:var(--accent)"></span>Task Completion Times
+        </div>
+        <canvas id="timechart"></canvas>
+      </div>
+      <div class="sec">
+        <div class="sec-title"><span class="dot" style="background:var(--orange)"></span>Per-Robot</div>
+        <div id="robot-stats" style="font-size:11px;line-height:1.8;overflow-y:auto;max-height:120px"></div>
+      </div>
+    </div>
+
+  </div><!-- /right -->
+</div><!-- /main -->
+
+<!-- ADD ROBOT MODAL -->
+<div id="modal">
+  <div class="mbox">
+    <h3>Add Robot to Fleet</h3>
+    <div class="frow"><label>X (column)</label><input id="m-x" type="number" value="1" min="0"/></div>
+    <div class="frow"><label>Y (row)</label><input id="m-y" type="number" value="0" min="0"/></div>
+    <div class="frow"><label>Speed (cells/sec, 1–8)</label><input id="m-spd" type="number" value="3" min="0.5" max="8" step="0.5"/></div>
+    <div class="frow"><label>Battery (%)</label><input id="m-bat" type="number" value="100" min="10" max="100"/></div>
+    <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
+      💡 You can also click directly on the warehouse canvas to place the robot.
+    </div>
+    <div class="btn-row">
+      <button class="btn pri" onclick="confirmAddRobot()">Add Robot</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="clickToPlace()" style="margin-left:auto">📍 Click on Map</button>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════
+const canvas = document.getElementById('sim');
+const ctx    = canvas.getContext('2d');
+const socket = io();
+
+let state         = null;
+let cellSize      = 28;
+let camX = 0, camY = 0, zoom = 1;
+let panning       = false, panStart = {};
+let placing       = false;   // click-to-place robot mode
+let edTool        = 0;       // editor tool (cell type)
+let selRobot      = null;    // selected robot id
+let activeTab     = 'sim';
+let deadlockCycles = [];     // current deadlock cycles
+let chartInst     = null;
+
+const C = {
+  FREE:     '#14191f',
+  OBSTACLE: '#5d3a20',
+  DROP:     '#1a3a30',
+  PICKUP:   '#253a1a',
+  SPAWN:    '#1a243a',
+  DYNOBS:   'rgba(248,81,73,0.85)',
+};
+const STATE_COLOR = {
+  IDLE:'#8b949e', MOVING_TO_PICKUP:'#3fb950', PICKING_UP:'#58a6ff',
+  MOVING_TO_DROPOFF:'#d29922', DROPPING_OFF:'#e67e22',
+  WAITING:'#f85149', LOW_BATTERY:'#ff0000',
+};
+
+// ═══════════════════════════════════════════════════
+// SOCKET
+// ═══════════════════════════════════════════════════
+socket.on('state_update', (s) => {
+  const first = !state;
+  state = s;
+  if (first) { fitView(); loadLayouts(); }
+  deadlockCycles = (s.viz && s.viz.deadlock && s.viz.deadlock.cycles) || [];
+  renderFrame();
+  updateUI();
+});
+
+function loadLayouts() {
+  fetch('/api/layouts').then(r=>r.json()).then(buildLayouts);
+}
+
+// ═══════════════════════════════════════════════════
+// CANVAS RESIZE & FIT
+// ═══════════════════════════════════════════════════
+function resizeCanvas() {
+  const w = document.getElementById('canvas-wrap');
+  canvas.width  = w.clientWidth;
+  canvas.height = w.clientHeight;
+  if (state) fitView();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function fitView() {
+  if (!state) return;
+  const wh = state.warehouse;
+  const pw = canvas.width - 40, ph = canvas.height - 40;
+  cellSize = Math.min(pw/wh.width, ph/wh.height);
+  cellSize = Math.max(10, Math.min(40, Math.floor(cellSize)));
+  zoom = 1;
+  camX = (canvas.width  - wh.width  * cellSize) / 2;
+  camY = (canvas.height - wh.height * cellSize) / 2;
+}
+
+// ═══════════════════════════════════════════════════
+// VIZ TOGGLES
+// ═══════════════════════════════════════════════════
+const vt = () => ({
+  pibt_pri:  document.getElementById('vt-pibt-pri').checked,
+  pibt_conf: document.getElementById('vt-pibt-conf').checked,
+  pibt_claim:document.getElementById('vt-pibt-claim').checked,
+  orca_v:    document.getElementById('vt-orca-v').checked,
+  orca_hp:   document.getElementById('vt-orca-hp').checked,
+  cbaa:      document.getElementById('vt-cbaa').checked,
+  brain:     document.getElementById('vt-brain').checked,
+  dl:        document.getElementById('vt-dl').checked,
+  paths:     document.getElementById('vt-paths').checked,
+  heat:      document.getElementById('vt-heat').checked,
+});
+
+// ═══════════════════════════════════════════════════
+// MAIN RENDER
+// ═══════════════════════════════════════════════════
+function renderFrame() {
+  if (!state) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(camX, camY);
+  ctx.scale(zoom, zoom);
+
+  const viz = vt();
+  drawGrid(viz);
+  if (viz.pibt_claim) drawPIBTClaims();
+  drawDynObs();
+  if (viz.heat) drawHeatmap();
+  if (viz.paths) drawPaths();
+  drawTasks();
+  drawRobots(viz);
+  if (viz.pibt_conf) drawConflicts();
+  if (viz.dl) drawDeadlocks();
+  if (viz.orca_hp) drawORCAPlanes();
+
+  ctx.restore();
+}
+
+function drawGrid(viz) {
+  const wh = state.warehouse;
+  for (let y = 0; y < wh.height; y++) {
+    for (let x = 0; x < wh.width; x++) {
+      const t = wh.grid[y][x];
+      const col = [C.FREE, C.OBSTACLE, C.DROP, C.PICKUP, C.SPAWN][t] || C.FREE;
+      ctx.fillStyle = col;
+      ctx.fillRect(x*cellSize, y*cellSize, cellSize, cellSize);
+      ctx.strokeStyle = '#1a1f28';
+      ctx.lineWidth = 0.4;
+      ctx.strokeRect(x*cellSize, y*cellSize, cellSize, cellSize);
+      // labels
+      if (t >= 2 && cellSize >= 16) {
+        const labels = {2:'D',3:'P',4:'S'};
+        const lc = {2:'#3fb95060',3:'#9fb95060',4:'#3f9fb960'};
+        ctx.fillStyle = lc[t]||'transparent';
+        ctx.font = `bold ${Math.floor(cellSize*.32)}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(labels[t]||'', x*cellSize+cellSize/2, y*cellSize+cellSize/2);
+      }
+    }
+  }
+}
+
+function drawDynObs() {
+  const wh = state.warehouse;
+  (wh.dynamic_obstacles || []).forEach(([x,y]) => {
+    ctx.fillStyle = C.DYNOBS;
+    ctx.fillRect(x*cellSize, y*cellSize, cellSize, cellSize);
+    ctx.strokeStyle = '#f85149'; ctx.lineWidth = 1.5;
+    const m = 4;
+    ctx.beginPath();
+    ctx.moveTo(x*cellSize+m,y*cellSize+m); ctx.lineTo(x*cellSize+cellSize-m,y*cellSize+cellSize-m);
+    ctx.moveTo(x*cellSize+cellSize-m,y*cellSize+m); ctx.lineTo(x*cellSize+m,y*cellSize+cellSize-m);
+    ctx.stroke();
+  });
+}
+
+function drawHeatmap() {
+  if (!state.robots) return;
+  const density = {};
+  state.robots.forEach(r => {
+    const k = `${Math.round(r.pos[0])},${Math.round(r.pos[1])}`;
+    density[k] = (density[k]||0)+1;
+  });
+  Object.entries(density).forEach(([k,d]) => {
+    const [x,y] = k.split(',').map(Number);
+    ctx.fillStyle = `rgba(255,120,0,${Math.min(0.6, d*0.25)})`;
+    ctx.fillRect(x*cellSize, y*cellSize, cellSize, cellSize);
+  });
+}
+
+function drawPIBTClaims() {
+  const viz = state.viz && state.viz.pibt;
+  if (!viz || !viz.claimed_cells) return;
+  viz.claimed_cells.forEach(([x,y]) => {
+    ctx.fillStyle = 'rgba(255,200,0,0.14)';
+    ctx.fillRect(x*cellSize, y*cellSize, cellSize, cellSize);
+  });
+}
+
+function drawConflicts() {
+  const viz = state.viz && state.viz.pibt;
+  if (!viz || !viz.conflicts) return;
+  viz.conflicts.forEach(c => {
+    const ra = state.robots.find(r=>r.id===c.from_id);
+    const rb = state.robots.find(r=>r.id===c.to_id);
+    if (!ra||!rb) return;
+    ctx.save();
+    ctx.strokeStyle='rgba(248,81,73,0.7)'; ctx.lineWidth=1.5;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(ra.pos[0]*cellSize+cellSize/2, ra.pos[1]*cellSize+cellSize/2);
+    ctx.lineTo(rb.pos[0]*cellSize+cellSize/2, rb.pos[1]*cellSize+cellSize/2);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawDeadlocks() {
+  if (!deadlockCycles.length || !state.robots) return;
+  deadlockCycles.forEach(cycle => {
+    const bots = cycle.map(id => state.robots.find(r=>r.id===id)).filter(Boolean);
+    bots.forEach(r => {
+      const rx = r.pos[0]*cellSize+cellSize/2, ry = r.pos[1]*cellSize+cellSize/2;
+      const rad = Math.max(6, cellSize*0.45)+4;
+      ctx.save();
+      ctx.strokeStyle = `rgba(248,81,73,${0.5+0.5*Math.sin(Date.now()/300)})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(rx, ry, rad, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    });
+    // Draw cycle arrows between robots
+    for (let i=0; i<bots.length; i++) {
+      const a = bots[i], b = bots[(i+1)%bots.length];
+      drawArrow(
+        a.pos[0]*cellSize+cellSize/2, a.pos[1]*cellSize+cellSize/2,
+        b.pos[0]*cellSize+cellSize/2, b.pos[1]*cellSize+cellSize/2,
+        'rgba(248,81,73,0.5)', 1.2
+      );
+    }
+  });
+}
+
+function drawPaths() {
+  if (!state.robots) return;
+  state.robots.forEach(r => {
+    if (!r.path || r.path.length === 0) return;
+    const isPickup = r.state.includes('PICKUP');
+    const col = isPickup ? '#3fb950' : '#d29922';
+    ctx.save();
+    ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+    ctx.globalAlpha = 0.45; ctx.setLineDash([4,4]);
+    ctx.beginPath();
+    ctx.moveTo(r.pos[0]*cellSize+cellSize/2, r.pos[1]*cellSize+cellSize/2);
+    r.path.forEach(([px,py]) => ctx.lineTo(px*cellSize+cellSize/2, py*cellSize+cellSize/2));
+    ctx.stroke();
+    ctx.restore();
+    // Markers
+    if (r.task_pickup)  drawMarker(r.task_pickup[0],  r.task_pickup[1],  '📦', '#3fb950');
+    if (r.task_dropoff) drawMarker(r.task_dropoff[0], r.task_dropoff[1], '📍', '#d29922');
+  });
+}
+
+function drawMarker(x, y, icon, col) {
+  if (cellSize < 14) return;
+  ctx.save(); ctx.globalAlpha = 0.85;
+  ctx.fillStyle = col+'40';
+  ctx.beginPath();
+  ctx.arc(x*cellSize+cellSize/2, y*cellSize+cellSize/2, cellSize*0.42, 0, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.font = `${Math.floor(cellSize*0.48)}px serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(icon, x*cellSize+cellSize/2, y*cellSize+cellSize/2);
+  ctx.restore();
+}
+
+function drawTasks() {
+  if (!state.tasks || cellSize < 14) return;
+  state.tasks.forEach(t => {
+    if (t.assigned_to !== null) return;
+    const px = t.pickup[0]*cellSize+cellSize/2, py = t.pickup[1]*cellSize+cellSize/2;
+    ctx.save();
+    ctx.globalAlpha = 0.65 + 0.35*Math.sin(Date.now()/400 + t.id);
+    ctx.font = `${Math.floor(cellSize*0.45)}px serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('📦', px, py);
+    ctx.restore();
+  });
+}
+
+function drawORCAPlanes() {
+  if (!state.robots) return;
+  state.robots.forEach(r => {
+    if (!r.viz || !r.viz.orca_planes) return;
+    const rx=r.pos[0]*cellSize+cellSize/2, ry=r.pos[1]*cellSize+cellSize/2;
+    r.viz.orca_planes.forEach((p,i) => {
+      const hue = (i*60+200)%360;
+      const tx=-p.ny, ty=p.nx;
+      const cx=rx+p.px*cellSize*0.25, cy=ry+p.py*cellSize*0.25;
+      ctx.save();
+      ctx.globalAlpha=0.2; ctx.strokeStyle=`hsl(${hue},70%,60%)`;
+      ctx.lineWidth=1; ctx.setLineDash([2,3]);
+      ctx.beginPath();
+      ctx.moveTo(cx-tx*50, cy-ty*50); ctx.lineTo(cx+tx*50, cy+ty*50);
+      ctx.stroke(); ctx.restore();
+    });
+  });
+}
+
+function drawRobots(viz) {
+  if (!state.robots) return;
+  const dlRobotIds = new Set(deadlockCycles.flat());
+
+  state.robots.forEach(r => {
+    const rx = r.pos[0]*cellSize+cellSize/2, ry = r.pos[1]*cellSize+cellSize/2;
+    const rad = Math.max(6, cellSize*0.38);
+    const sel = selRobot === r.id;
+    const inDL = dlRobotIds.has(r.id);
+
+    // Glow for selected or deadlock
+    if (sel || inDL) {
+      ctx.save();
+      ctx.shadowColor = inDL ? '#f85149' : r.color;
+      ctx.shadowBlur  = inDL ? 14 : 10;
+      ctx.beginPath(); ctx.arc(rx,ry,rad,0,Math.PI*2);
+      ctx.fillStyle = 'transparent'; ctx.fill();
+      ctx.restore();
+    }
+
+    // Low-battery pulse
+    if (r.battery < 15) {
+      ctx.save(); ctx.globalAlpha=0.4+0.6*Math.sin(Date.now()/250);
+      ctx.fillStyle='rgba(248,81,73,0.5)';
+      ctx.beginPath(); ctx.arc(rx,ry,rad+4,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+
+    // Body
+    ctx.beginPath(); ctx.arc(rx,ry,rad,0,Math.PI*2);
+    ctx.fillStyle = r.color;
+    ctx.fill();
+    ctx.strokeStyle = sel ? '#fff' : 'rgba(0,0,0,0.4)';
+    ctx.lineWidth   = sel ? 2.2 : 1;
+    ctx.stroke();
+
+    // State ring (thin colored ring showing state)
+    const stCol = STATE_COLOR[r.state] || '#888';
+    ctx.beginPath(); ctx.arc(rx,ry,rad+2,0,Math.PI*2);
+    ctx.strokeStyle = stCol+'80'; ctx.lineWidth=1.5; ctx.stroke();
+
+    // ORCA velocity arrows
+    if (viz.orca_v && r.viz) {
+      const sc = cellSize*0.7;
+      const pv = [r.viz.pref_vx||0, r.viz.pref_vy||0];
+      const ov = [r.viz.orca_vx||0, r.viz.orca_vy||0];
+      const pvl = Math.hypot(...pv), ovl = Math.hypot(...ov);
+      if (pvl>0.05) drawArrow(rx,ry, rx+pv[0]/pvl*sc, ry+pv[1]/pvl*sc, '#58a6ff80',1.5);
+      if (ovl>0.05) drawArrow(rx,ry, rx+ov[0]/ovl*sc*0.8, ry+ov[1]/ovl*sc*0.8,'#3fb950cc',2);
+    }
+
+    // Direction arrow
+    if (r.target_cell && cellSize >= 14) {
+      const tx=r.target_cell[0]*cellSize+cellSize/2, ty=r.target_cell[1]*cellSize+cellSize/2;
+      const d=Math.hypot(tx-rx,ty-ry);
+      if (d>2) { const nx=(tx-rx)/d,ny=(ty-ry)/d;
+        drawArrow(rx+nx*rad*.5,ry+ny*rad*.5,rx+nx*(rad+7),ry+ny*(rad+7),'rgba(255,255,255,.55)',1.5); }
+    }
+
+    // Robot ID
+    if (cellSize >= 13) {
+      ctx.fillStyle='#fff'; ctx.font=`bold ${Math.max(8,Math.floor(rad*.7))}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(r.id, rx, ry);
+    }
+
+    // PIBT priority badge
+    if (viz.pibt_pri && r.viz && r.viz.priority !== undefined) {
+      const bx=rx+rad*.6, by=ry-rad*.6;
+      ctx.fillStyle = r.viz.in_conflict ? '#f85149' : '#d29922';
+      ctx.beginPath(); ctx.arc(bx,by,5.5,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.font='bold 7px sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(r.viz.priority||0, bx, by);
+    }
+
+    // Brain decision badge
+    if (viz.brain && r.viz && r.viz.brain_action && r.viz.brain_action !== 'CONTINUE') {
+      const actionLabels = {
+        DROP_TASK:'DROP', CHAIN_TASK:'CHAIN', RETREAT:'RET',
+        EMERGENCY_STOP:'⚠BAT', REPLAN:'RPL',
+      };
+      const lbl = actionLabels[r.viz.brain_action] || r.viz.brain_action;
+      ctx.fillStyle='rgba(210,153,34,0.9)';
+      ctx.font='bold 8px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
+      ctx.fillText(lbl, rx+rad+2, ry-8);
+    }
+
+    // CBAA bid
+    if (viz.cbaa && r.viz && r.viz.bid_values) {
+      const bids=Object.values(r.viz.bid_values);
+      if (bids.length>0) {
+        const top=Math.max(...bids).toFixed(2);
+        ctx.fillStyle='rgba(88,166,255,.8)'; ctx.font='8px mono';
+        ctx.textAlign='left'; ctx.textBaseline='bottom';
+        ctx.fillText(`b:${top}`, rx+rad+2, ry+4);
+      }
+    }
+
+    // State text
+    if (cellSize>=20) {
+      const sl=r.state.replace('MOVING_TO_','→').replace('_',' ');
+      ctx.fillStyle='rgba(140,148,158,.6)'; ctx.font='7px sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='top';
+      ctx.fillText(sl, rx, ry+rad+2);
+    }
+  });
+}
+
+function drawArrow(x1,y1,x2,y2,col,lw) {
+  const dx=x2-x1,dy=y2-y1,d=Math.hypot(dx,dy);
+  if (d<2) return;
+  ctx.save(); ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=lw;
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  const a=Math.atan2(dy,dx), hs=Math.max(4,lw*3);
+  ctx.beginPath();
+  ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-hs*Math.cos(a-.4),y2-hs*Math.sin(a-.4));
+  ctx.lineTo(x2-hs*Math.cos(a+.4),y2-hs*Math.sin(a+.4));
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+// Animation loop
+function animLoop() { if(state) renderFrame(); requestAnimationFrame(animLoop); }
+animLoop();
+
+// ═══════════════════════════════════════════════════
+// UI UPDATES
+// ═══════════════════════════════════════════════════
+function updateUI() {
+  if (!state) return;
+  const m = state.metrics || {};
+
+  // Top stats
+  const coll=m.total_collisions||0, dead=m.total_deadlocks||0;
+  document.getElementById('v-coll').textContent = coll;
+  document.getElementById('v-dead').textContent = dead;
+  document.getElementById('v-done').textContent = m.completed||0;
+  document.getElementById('v-robots').textContent = m.n_robots||0;
+  const avgT = m.avg_completion_time;
+  document.getElementById('v-avg').textContent = avgT ? avgT.toFixed(1) : '—';
+  document.getElementById('s-coll').classList.toggle('bad', coll>0);
+
+  const imp=m.improvement_pct;
+  if (imp!==null&&imp!==undefined) {
+    document.getElementById('s-imp').style.display='';
+    const el=document.getElementById('v-imp');
+    el.textContent=(imp>0?'+':'')+imp+'%';
+    el.style.color=imp>0?'var(--green)':'var(--red)';
+  }
+
+  document.getElementById('ot-tick').textContent=`Tick: ${state.tick||0}`;
+  if (state.warehouse) {
+    const wh=state.warehouse;
+    document.getElementById('ot-layout').textContent=wh.name||'Warehouse';
+    document.getElementById('ot-size').textContent=`${wh.width}×${wh.height}`;
+  }
+  document.getElementById('ot-mode').textContent = state.baseline_mode
+    ? 'BASELINE' : 'PIBT+MAPF+ORCA';
+  document.getElementById('mode-chip').textContent = state.baseline_mode
+    ? 'Stop-and-Wait' : 'PIBT+MAPF+ORCA';
+  document.getElementById('pause-btn').textContent = state.paused ? '▶ Resume' : '⏸ Pause';
+
+  updateRobotList();
+  updateEventLog();
+  if (activeTab==='algo') updateAlgoPanel();
+  if (activeTab==='analytics') updateAnalytics(m);
+  updateChart(m);
+}
+
+function updateRobotList() {
+  if (!state.robots) return;
+  document.getElementById('fleet-label').textContent=`(${state.robots.length})`;
+  document.getElementById('robot-list').innerHTML = state.robots.map(r=>{
+    const bat=Math.max(0,r.battery);
+    const batCls=bat<20?'lo':bat<50?'md':'';
+    const stLbl=r.state.replace('MOVING_TO_','→').replace('_',' ');
+    const brainAct=r.viz&&r.viz.brain_action&&r.viz.brain_action!=='CONTINUE'?r.viz.brain_action:'';
+    const brainReason=r.viz&&r.viz.brain_reason||'';
+    const sel=selRobot===r.id;
+    return `<div class="rcard ${sel?'sel':''}" onclick="selRobot=${sel?'null':r.id}">
+      <div class="rdot" style="background:${r.color}"></div>
+      <div class="rinfo">
+        <div class="rname">R${r.id}
+          ${bat<15?'<span style="color:var(--red)">⚡</span>':''}
+          ${r.collisions>0?`<span style="color:var(--red);font-size:9px">⚠${r.collisions}</span>`:''}
+          ${brainAct?`<span class="brain-badge active">${brainAct}</span>`:''}
+        </div>
+        <div class="rstate">${stLbl} ${r.task_id!==null?`· T#${r.task_id}`:''}</div>
+        ${brainReason?`<div style="font-size:9px;color:var(--orange)">${brainReason}</div>`:''}
+        <div class="batbar"><div class="batfill ${batCls}" style="width:${bat}%"></div></div>
+        <div style="font-size:9px;color:var(--muted)">${bat.toFixed(0)}% · ✓${r.tasks_done} · W${r.ticks_waiting}</div>
+      </div>
+      <div onclick="event.stopPropagation();removeRobot(${r.id})"
+           style="width:20px;height:20px;border-radius:4px;border:1px solid var(--border);
+                  background:transparent;color:var(--muted);cursor:pointer;display:flex;
+                  align-items:center;justify-content:center;font-size:11px"
+           title="Remove">✕</div>
+    </div>`;
+  }).join('');
+}
+
+function updateEventLog() {
+  const log=document.getElementById('evlog');
+  const events=state.events||[];
+  log.innerHTML=events.slice().reverse().slice(0,25).map((e,i)=>{
+    const cls=e.includes('[ERR]')?'err':e.includes('Deadlock')||e.includes('drops')?'warn':'';
+    return `<div class="evline ${i===0?'new':''} ${cls}">${e}</div>`;
+  }).join('');
+}
+
+function updateAlgoPanel() {
+  const viz=state.viz||{};
+  const p=viz.pibt||{}, c=viz.cbaa||{}, d=viz.deadlock||{};
+  const nConf=(p.conflicts||[]).length, nWait=(p.waiting||[]).length;
+  const nDL=(d.cycles||[]).length;
+  const nAuct=Object.keys(c.assignments||{}).length;
+
+  document.getElementById('algo-status').innerHTML=`
+  <div class="algo-block">
+    <div class="algo-title" style="color:var(--yellow)">🔷 PIBT — Priority Inheritance with Backtracking</div>
+    <div class="algo-row"><span style="color:var(--muted)">Active conflicts</span>
+      <b style="color:${nConf>0?'var(--red)':'var(--green)'}">${nConf}</b></div>
+    <div class="algo-row"><span style="color:var(--muted)">Robots waiting</span>
+      <b style="color:${nWait>0?'var(--orange)':'var(--green)'}">${nWait}</b></div>
+    <div class="algo-row"><span style="color:var(--muted)">Claimed cells</span>
+      <b>${(p.claimed_cells||[]).length}</b></div>
+  </div>
+  <div class="algo-block">
+    <div class="algo-title" style="color:var(--accent)">🗺 Space-Time A* (MAPF)</div>
+    <div class="algo-row"><span style="color:var(--muted)">Planned paths</span>
+      <b>${state.robots?state.robots.filter(r=>r.path&&r.path.length>0).length:0}</b></div>
+    <div class="algo-row"><span style="color:var(--muted)">Replan interval</span><b>15 ticks</b></div>
+    <div class="algo-row"><span style="color:var(--muted)">Table size</span>
+      <b>${(viz.mapf&&viz.mapf.reservation_sample)?viz.mapf.reservation_sample.length+'+ entries':'—'}</b></div>
+  </div>
+  <div class="algo-block">
+    <div class="algo-title" style="color:var(--purple)">🔁 ORCA — Optimal Reciprocal Collision Avoidance</div>
+    ${state.robots?state.robots.slice(0,4).map(r=>`
+      <div class="algo-row" style="font-size:10px">
+        <span style="color:${r.color}">R${r.id}</span>
+        <span>pref=(${(r.viz.pref_vx||0).toFixed(1)},${(r.viz.pref_vy||0).toFixed(1)})
+              orca=(${(r.viz.orca_vx||0).toFixed(1)},${(r.viz.orca_vy||0).toFixed(1)})
+              planes=${(r.viz.orca_planes||[]).length}</span>
+      </div>`).join(''):''}
+  </div>
+  <div class="algo-block">
+    <div class="algo-title" style="color:var(--green)">🏷 CBAA — Consensus Auction</div>
+    <div class="algo-row"><span style="color:var(--muted)">Last assignments</span>
+      <b style="color:var(--green)">${nAuct}</b></div>
+    ${(c.events||[]).slice(-3).map(e=>`<div style="font-size:10px;color:var(--muted)">${e}</div>`).join('')}
+  </div>
+  <div class="algo-block" style="border:1px solid ${nDL>0?'var(--red)':'var(--border)'}">
+    <div class="algo-title" style="color:${nDL>0?'var(--red)':'var(--green)'}">
+      🔗 Deadlock Detector (Wait-For Graph)</div>
+    <div class="algo-row"><span style="color:var(--muted)">Active cycles</span>
+      <b style="color:${nDL>0?'var(--red)':'var(--green)'}">${nDL}</b></div>
+    <div class="algo-row"><span style="color:var(--muted)">Total resolved</span>
+      <b>${state.metrics&&state.metrics.total_deadlocks||0}</b></div>
+    ${(d.actions||[]).slice(-2).map(a=>`
+      <div style="font-size:10px;color:var(--muted)">${a.type} R${a.robot_id}: cycle[${(a.cycle||[]).join(',')}]</div>
+    `).join('')}
+  </div>
+  <div class="algo-block">
+    <div class="algo-title" style="color:var(--orange)">🧠 Robot Brains</div>
+    ${Object.values(viz.brains||{}).slice(0,5).map(b=>`
+      <div class="algo-row" style="font-size:10px">
+        <span style="color:var(--muted)">R${b.robot_id}</span>
+        <span style="color:${b.decision!=='CONTINUE'?'var(--orange)':'var(--muted)'}">${b.decision}</span>
+        <span style="color:var(--muted);font-size:9px">${b.reason||''}</span>
+      </div>`).join('')}
+  </div>`;
+}
+
+function updateAnalytics(m) {
+  const el=document.getElementById('metrics-detail');
+  if(!el) return;
+  const rows=[
+    ['Tasks Completed', m.completed||0],
+    ['Active Tasks',    m.active||0],
+    ['Avg Time (PIBT)', `<b style="color:var(--green)">${(m.pibt_avg_time||0).toFixed(2)}s</b>`],
+    ['Avg Time (Baseline)', `<b style="color:var(--orange)">${(m.baseline_avg_time||0).toFixed(2)}s</b>`],
+    ['Improvement',    m.improvement_pct!==null?`<b style="color:var(--green)">+${m.improvement_pct}%</b>`:'—'],
+    ['Total Collisions', `<b style="color:${(m.total_collisions||0)>0?'var(--red)':'var(--green)'}">${m.total_collisions||0}</b>`],
+    ['Total Deadlocks',  `<b style="color:var(--yellow)">${m.total_deadlocks||0}</b>`],
+    ['Throughput',      `${(m.throughput_per_min||0).toFixed(1)}/min`],
+    ['Robots active',   `${m.n_active||0}/${m.n_robots||0}`],
+  ];
+  el.innerHTML=rows.map(([k,v])=>
+    `<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding:2px 0">
+      <span style="color:var(--muted)">${k}</span><span>${v}</span></div>`).join('');
+
+  const rs=document.getElementById('robot-stats');
+  if(state.robots&&rs) {
+    rs.innerHTML=state.robots.map(r=>
+      `<div style="display:flex;justify-content:space-between;font-size:11px;border-bottom:1px solid var(--border);padding:2px 0">
+        <span style="color:${r.color}">R${r.id}</span>
+        <span>${r.tasks_done} tasks · ${r.battery.toFixed(0)}% · W${r.ticks_waiting}</span>
+      </div>`).join('');
+  }
+}
+
+function updateChart(m) {
+  const times=m.recent_times||[];
+  if (!times.length) return;
+  if (!chartInst) initChart();
+  const last=times[times.length-1];
+  if (chartInst.data.labels.length>30) {
+    chartInst.data.labels.shift();
+    chartInst.data.datasets[0].data.shift();
+    chartInst.data.datasets[1].data.shift();
+  }
+  chartInst.data.labels.push(m.completed||0);
+  chartInst.data.datasets[0].data.push(last);
+  // Simulated baseline estimate
+  chartInst.data.datasets[1].data.push(m.baseline_avg_time||0);
+  chartInst.update('none');
+}
+function initChart() {
+  const c2=document.getElementById('timechart').getContext('2d');
+  chartInst=new Chart(c2,{
+    type:'line',
+    data:{labels:[],datasets:[
+      {label:'PIBT+MAPF+ORCA',data:[],borderColor:'#58a6ff',
+       backgroundColor:'#58a6ff20',tension:.3,fill:true,pointRadius:2,borderWidth:2},
+      {label:'Baseline (est.)',data:[],borderColor:'#d29922',
+       backgroundColor:'#d2992210',tension:.3,fill:true,pointRadius:2,borderWidth:1.5,borderDash:[4,4]},
+    ]},
+    options:{responsive:true,animation:false,
+      plugins:{legend:{labels:{color:'#8b949e',font:{size:10}}}},
+      scales:{
+        x:{ticks:{color:'#8b949e',font:{size:9}},grid:{color:'#21262d'}},
+        y:{ticks:{color:'#8b949e',font:{size:9}},grid:{color:'#21262d'},
+           title:{display:true,text:'Time (s)',color:'#8b949e',font:{size:9}}},
+      }},
+  });
+}
+
+// ═══════════════════════════════════════════════════
+// CANVAS INTERACTION
+// ═══════════════════════════════════════════════════
+function toGrid(cx,cy) {
+  const gx=Math.floor((cx/zoom - camX/zoom)/cellSize);
+  const gy=Math.floor((cy/zoom - camY/zoom)/cellSize);
+  return {gx,gy};
+}
+
+canvas.addEventListener('click', e => {
+  if (panning) return;
+  const rect=canvas.getBoundingClientRect();
+  const {gx,gy}=toGrid(e.clientX-rect.left, e.clientY-rect.top);
+  if (!state) return;
+  const wh=state.warehouse;
+  if (gx<0||gy<0||gx>=wh.width||gy>=wh.height) return;
+
+  if (placing) {
+    document.getElementById('m-x').value=gx;
+    document.getElementById('m-y').value=gy;
+    confirmAddRobot();
+    placing=false; canvas.style.cursor='crosshair';
+    return;
+  }
+  if (activeTab==='editor') {
+    fetch('/api/cell',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({x:gx,y:gy,type:edTool})});
+    return;
+  }
+  // Default: toggle obstacle
+  fetch('/api/obstacle',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({x:gx,y:gy})});
+});
+
+canvas.addEventListener('mousemove', e => {
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  if (panning) {
+    camX=panStart.cx+(mx-panStart.x); camY=panStart.cy+(my-panStart.y); return;
+  }
+  const {gx,gy}=toGrid(mx,my);
+  if (!state||!state.warehouse) return;
+  const wh=state.warehouse;
+  if (gx<0||gy<0||gx>=wh.width||gy>=wh.height) {
+    document.getElementById('tip').style.display='none'; return;
+  }
+  const t=wh.grid[gy][gx];
+  const names=['Free','Obstacle','Drop Zone','Pickup','Spawn'];
+  const isDyn=(wh.dynamic_obstacles||[]).some(([x,y])=>x===gx&&y===gy);
+  const bot=state.robots&&state.robots.find(r=>Math.round(r.pos[0])===gx&&Math.round(r.pos[1])===gy);
+  let html=`<b>(${gx},${gy})</b> ${names[t]||'?'}${isDyn?' 🚫 BLOCKED':''}<br/>`;
+  if (bot) {
+    const ba=bot.viz&&bot.viz.brain_action||'';
+    html+=`<span style="color:${bot.color}">■</span> Robot ${bot.id} · ${bot.state}<br/>`;
+    html+=`Bat: ${bot.battery.toFixed(0)}% · Done: ${bot.tasks_done}<br/>`;
+    if (ba&&ba!=='CONTINUE') html+=`Brain: <b style="color:var(--orange)">${ba}</b> — ${bot.viz.brain_reason||''}`;
+  }
+  const tip=document.getElementById('tip');
+  tip.innerHTML=html; tip.style.display='block';
+  tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY-10)+'px';
+});
+canvas.addEventListener('mouseleave',()=>document.getElementById('tip').style.display='none');
+
+canvas.addEventListener('wheel', e=>{ e.preventDefault();
+  zoom=Math.max(0.4,Math.min(5,zoom*(e.deltaY<0?1.1:0.91)));},{passive:false});
+
+canvas.addEventListener('mousedown', e=>{
+  if (e.button===1||e.altKey) {
+    panning=true; const r=canvas.getBoundingClientRect();
+    panStart={x:e.clientX-r.left,y:e.clientY-r.top,cx:camX,cy:camY};
+    canvas.style.cursor='grabbing';
+  }
+});
+canvas.addEventListener('mouseup',()=>{ if(panning){panning=false;canvas.style.cursor='crosshair';} });
+
+document.addEventListener('keydown', e=>{
+  if (e.key==='r'||e.key==='R') fitView();
+  if (e.key==='Escape') { closeModal(); placing=false; canvas.style.cursor='crosshair'; }
+});
+
+// ═══════════════════════════════════════════════════
+// CONTROLS
+// ═══════════════════════════════════════════════════
+function switchTab(t) {
+  activeTab=t;
+  document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.pview').forEach(el=>el.classList.remove('active'));
+  document.querySelector(`.tab[onclick*="${t}"]`)?.classList.add('active');
+  document.getElementById(`pview-${t}`)?.classList.add('active');
+  if (t==='sim'&&state) fitView();
+}
+
+function openModal() { document.getElementById('modal').classList.add('show'); }
+function closeModal() { document.getElementById('modal').classList.remove('show'); placing=false; canvas.style.cursor='crosshair'; }
+function clickToPlace() { closeModal(); placing=true; canvas.style.cursor='cell'; }
+function confirmAddRobot() {
+  const x=parseInt(document.getElementById('m-x').value);
+  const y=parseInt(document.getElementById('m-y').value);
+  const spd=parseFloat(document.getElementById('m-spd').value);
+  const bat=parseFloat(document.getElementById('m-bat').value);
+  fetch('/api/robot/add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({x,y,speed:spd,battery:bat})})
+    .then(r=>r.json()).then(d=>{if(!d.ok) alert('Cannot place robot: '+d.error);});
+  closeModal();
+}
+function removeRobot(id) {
+  if (!confirm(`Remove Robot ${id}?`)) return;
+  fetch('/api/robot/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+}
+function togglePause() {
+  fetch('/api/pause',{method:'POST'});
+}
+function toggleMode() {
+  const cur=state&&state.baseline_mode;
+  fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({baseline:!cur})});
+}
+function doReset() { if(!confirm('Reset simulation?'))return; fetch('/api/reset',{method:'POST'}); }
+function setSpeed(v) {
+  document.getElementById('speed-lbl').textContent=v+'×';
+  fetch('/api/speed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({speed:parseFloat(v)})});
+}
+function addTask() {
+  if (!state||!state.warehouse) return;
+  const wh=state.warehouse;
+  const pk=wh.pickup_points||[], dz=wh.drop_zones||[];
+  if (!pk.length||!dz.length) { alert('No pickup/drop zones in this layout. Use editor to add them.'); return; }
+  const pickup=pk[Math.floor(Math.random()*pk.length)];
+  const dropoff=dz[Math.floor(Math.random()*dz.length)];
+  fetch('/api/task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pickup,dropoff})});
+}
+function setTool(t,el) {
+  edTool=t;
+  document.querySelectorAll('.ctool').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+}
+function saveLayout() {
+  const name=prompt('Layout name:','my_warehouse');
+  if (!name) return;
+  fetch('/api/layout/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+    .then(r=>r.json()).then(d=>{ if(d.ok) alert(`Saved as "${name}"`); });
+}
+
+// Layout library
+let curLayout='standard';
+function buildLayouts(layouts) {
+  document.getElementById('lgrid').innerHTML=layouts.map(l=>
+    `<div class="lcard ${l.id===curLayout?'active':''}" onclick="loadLayout('${l.id}',this)">
+      <div class="lname">${l.name}</div>
+      <div class="lsize">${l.width}×${l.height||'?'}</div>
+      <div style="font-size:9px;color:var(--muted)">${l.builtin?'Built-in':'Custom'}</div>
+    </div>`).join('');
+}
+function loadLayout(name,el) {
+  document.querySelectorAll('.lcard').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active'); curLayout=name;
+  fetch('/api/layout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+    .then(r=>r.json()).then(d=>{ if(!d.ok) alert('Layout error: '+d.error); else fitView(); });
+}
+</script>
+</body>
+</html>
